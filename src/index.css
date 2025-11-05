@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes organic-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  20%  { transform: translate(150px, -90px) scale(1); }
+  30%,40% { transform: translate(150px, 90px) scale(0.7); }
+  50%   { transform: translate(0, 0) scale(1); }
+  53%,63%  { transform: translate(300px, 20px) scale(1); }
+  66%,76%  { transform: translate(-300px, -20px) scale(1); }
+  80%, 90%, 100% { transform: translate(0, 0) scale(1); } 
+}
+
+@keyframes idle-glow-blue {
+  0%, 100% { box-shadow: 0 0 60px rgba(0,120,255,0.5); }
+  50%      { box-shadow: 0 0 100px rgba(0,120,255,1); }
+}
+
+@keyframes voice-wave-blue {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 80px rgba(0,120,255,0.7); }
+  50%      { transform: scale(0.85); box-shadow: 0 0 180px rgba(0,120,255,1); }
+}
+
+.animate-organic-blue {
+  animation: organic-drift 22s  infinite 2s,
+             idle-glow-blue 4s  infinite;
+}
+
+.animate-voice-blue {
+  animation: voice-wave-blue 2s ease-in-out= infinite;
+}
+
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
