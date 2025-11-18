@@ -1,9 +1,8 @@
 // src/pages/Video.tsx
 import React, { useEffect, useRef, useState } from "react";
-import { useMqtt } from "../context/MqttContext";
 import { useCamera } from "../context/CameraContext";
 
-const VIDEO_TOPIC = "crimebot/video";
+// WebSocket-based streaming handled in CameraContext now
 
 type TabKey =
   | "dashboard"
@@ -19,12 +18,12 @@ type Props = {
 };
 
 export default function Video({ setTab }: Props) {
-  const { client } = useMqtt();
   const camera = useCamera();
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Use camera context's refs so frame capture works
+  const videoRef = camera.videoRef;
+  const canvasRef = camera.canvasRef;
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [modeLocal, setModeLocal] = useState<"idle" | "camera" | "viewer">("idle");
   const [recording, setRecording] = useState(false);
@@ -32,17 +31,8 @@ export default function Video({ setTab }: Props) {
   const [micOn, setMicOn] = useState(false);
   const [audioOn, setAudioOn] = useState(false);
 
-  // Attach local camera stream
-  useEffect(() => {
-    if (camera.stream && videoRef.current) {
-      videoRef.current.srcObject = camera.stream;
-    }
-    return () => {
-      if (videoRef.current && videoRef.current.srcObject === camera.stream) {
-        // don’t clear automatically; explicit stop handles it
-      }
-    };
-  }, [camera.stream]);
+  // Video element is fully managed by CameraContext (stream attachment, play, etc.)
+  // No need to duplicate stream attachment here
 
   // React to provider mode
   useEffect(() => {
@@ -55,8 +45,11 @@ export default function Video({ setTab }: Props) {
   const startCamera = async () => {
     try {
       await camera.startCamera({ audio: micOn });
-      camera.startPublishingFrames();
       setModeLocal("camera");
+      // Wait a bit for video element to be ready before starting frame capture
+      setTimeout(() => {
+        camera.startPublishingFrames();
+      }, 500);
     } catch (err) {
       console.error("startCamera failed:", err);
     }
@@ -69,40 +62,17 @@ export default function Video({ setTab }: Props) {
     setModeLocal("idle");
   };
 
-  // Viewer mode MQTT subscription
+  // Viewer mode via WebSocket managed by CameraContext; keep <img> src updated
   useEffect(() => {
-    if (!client) return;
-
-    const onMessage = (topic: string, payload: Buffer | Uint8Array) => {
-      if (topic !== VIDEO_TOPIC) return;
-      // payload is base64 string (no data: prefix) as published by CameraContext
-      const msg = payload.toString();
-      if (imgRef.current) {
-        // ensure proper data URL for img src
-        if (msg.startsWith("data:")) {
-          imgRef.current.src = msg;
-        } else {
-          imgRef.current.src = `data:image/jpeg;base64,${msg}`;
-        }
-      }
-    };
-
     if (modeLocal === "viewer") {
-      client.subscribe(VIDEO_TOPIC, { qos: 0 }, (err) => {
-        if (err) console.error("Subscribe error:", err);
-      });
-      client.on("message", onMessage);
+      camera.startViewer();
     }
-
     return () => {
-      client?.removeListener("message", onMessage);
       if (modeLocal === "viewer") {
-        client.unsubscribe(VIDEO_TOPIC, (err) => {
-          if (err) console.error("Unsubscribe error:", err);
-        });
+        camera.stopViewer();
       }
     };
-  }, [client, modeLocal]);
+  }, [modeLocal]);
 
   // Snapshot
   const takeSnapshot = () => {
@@ -177,6 +147,7 @@ export default function Video({ setTab }: Props) {
             ref={imgRef}
             alt="Incoming Stream"
             className="w-full h-full object-contain rounded-lg shadow-md bg-black"
+            src={camera.lastFrameUrl || undefined}
           />
         ) : (
           <video
@@ -189,7 +160,7 @@ export default function Video({ setTab }: Props) {
         )}
       </div>
 
-      <canvas ref={canvasRef} style={{ display: "none" }} />
+      <canvas ref={canvasRef} style={{ display: "none" }} width={640} height={480} />
 
       <div className="flex flex-wrap gap-3 mt-4">
         {modeLocal === "camera" ? (
@@ -212,9 +183,7 @@ export default function Video({ setTab }: Props) {
           <button
             onClick={() => {
               setModeLocal("idle");
-              client?.unsubscribe(VIDEO_TOPIC, (err) => {
-                if (err) console.error("Unsubscribe error:", err);
-              });
+              camera.stopViewer();
             }}
             className="px-4 py-2 bg-red-700 text-white rounded-lg"
           >
