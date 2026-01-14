@@ -35,7 +35,21 @@ const bots = new Map();
 let latestFrame = null; // video frame storage (binary JPEG)
 
 // --- MQTT client ---
-const mqtt = connect(MQTT_URL);
+const mqtt = connect(MQTT_URL, {
+  keepalive: 60,        // Send ping every 60s
+  reconnectPeriod: 1000, // Retry every 1s
+  connectTimeout: 30000, // 30s timeout
+  clean: true,
+});
+
+mqtt.on("reconnect", () => {
+  console.log("♻️ MQTT reconnecting...");
+});
+
+mqtt.on("offline", () => {
+  console.error("❌ MQTT went offline!");
+});
+
 
 // Helper: add/update bot
 function upsertBot(id, updates) {

@@ -53,6 +53,10 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
   // FPS tracking
   const fpsWindowRef = useRef<number[]>([]);
   const lastFpsLogRef = useRef<number>(Date.now());
+  
+  // ✅ ADD: Watchdog to detect stuck loops
+  const watchdogIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFrameTimeRef = useRef<number>(Date.now());
 
   // 🧹 Cleanup on unmount
   useEffect(() => {
@@ -61,9 +65,11 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
       if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
       if (publisherSocketRef.current) publisherSocketRef.current.disconnect();
       if (viewerSocketRef.current) viewerSocketRef.current.disconnect();
+      if (watchdogIntervalRef.current) clearInterval(watchdogIntervalRef.current);
     };
   }, [lastFrameUrl]);
-
+  
+  
   // 🎥 Start camera
   const startCamera = async (opts?: { audio?: boolean }) => {
     try {
@@ -134,6 +140,28 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
     console.log("🛑 Camera stopped");
   };
 
+
+  // Check browser throttling
+useEffect(() => {
+  // Prevent tab from sleeping
+  let wakeLock: any = null;
+  
+  if ('wakeLock' in navigator) {
+    (navigator as any).wakeLock.request('screen').then((lock: any) => {
+      wakeLock = lock;
+      console.log('✅ Wake lock acquired');
+    }).catch((err: any) => {
+      console.warn('⚠️ Wake lock failed:', err);
+    });
+  }
+  
+  return () => {
+    if (wakeLock) {
+      wakeLock.release();
+    }
+  };
+}, []);
+
   // 📤 Start publishing frames
   const startPublishingFrames = () => {
     if (loopStartedRef.current) {
@@ -145,23 +173,26 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
     frameCountRef.current = 0;
     fpsWindowRef.current = [];
 
+    
     const targetFps = 10;
     const minFrameIntervalMs = 1000 / targetFps;
     const jpegQuality = 0.7; // Increased from 0.6
     const maxWidth = 640;
 
+
     // Setup Socket.IO
     if (!publisherSocketRef.current) {
       console.log("🔌 Connecting to WebSocket server...");
       
+      // In startPublishingFrames
       const socket = io("http://localhost:4000", {
-        transports: ["websocket"],
-        query: { role: "publisher" },
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 10,
+      transports: ["websocket"],
+      query: { role: "publisher" },
+      reconnection: true,
+      reconnectionDelay: 500,        // Try every 500ms
+      reconnectionDelayMax: 2000,    // Max 2s between attempts
+      reconnectionAttempts: Infinity, // Never give up
       });
-
       socket.on("connect", () => {
         console.log("✅ WebSocket publisher connected, socket.id:", socket.id);
         console.log("✅ Socket connected:", socket.connected);
@@ -187,6 +218,28 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Start frame capture loop
     startFrameLoop();
+    
+    // ✅ ADD: Watchdog to restart loop if stuck
+    watchdogIntervalRef.current = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastFrame = now - lastFrameTimeRef.current;
+      
+      if (loopStartedRef.current && timeSinceLastFrame > 5000) {
+        console.error("🚨 WATCHDOG: No frames for 5s! Restarting loop...");
+        console.log("Debug info:", {
+          loopStarted: loopStartedRef.current,
+          socketConnected: publisherSocketRef.current?.connected,
+          videoWidth: videoRef.current?.videoWidth,
+          videoHeight: videoRef.current?.videoHeight,
+          frameCount: frameCountRef.current,
+        });
+        
+        // Try to restart loop
+        if (loopRef.current) cancelAnimationFrame(loopRef.current);
+        loopRef.current = null;
+        startFrameLoop();
+      }
+    }, 5000);
 
     function startFrameLoop() {
       console.log("🎬 Starting frame capture loop");
@@ -320,6 +373,9 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
 
               // Update FPS statistics
               updateFpsStats();
+              
+              // ✅ ADD: Update watchdog timestamp
+              lastFrameTimeRef.current = Date.now();
             }).catch((err) => {
               console.error("❌ arrayBuffer error:", err);
             });
@@ -373,17 +429,22 @@ export const CameraProvider: React.FC<{ children: React.ReactNode }> = ({
       loopRef.current = null;
     }
     
+    if (watchdogIntervalRef.current) {
+      clearInterval(watchdogIntervalRef.current);
+      watchdogIntervalRef.current = null;
+    }
+    
     console.log("🛑 Frame publishing stopped");
   };
 
-  // 👁️ Start viewer
+  //  Start viewer
   const startViewer = () => {
     if (viewerSocketRef.current) {
       console.warn("⚠️ Viewer already started");
       return;
     }
 
-    console.log("👁️ Starting viewer...");
+    console.log("Starting viewer...");
 
     const socket = io("http://localhost:4000", {
       transports: ["websocket"],
